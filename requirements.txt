@@ -1,1 +1,1 @@
-keeper-commander>=17.1.2
+keepercommander>=17.1.2
