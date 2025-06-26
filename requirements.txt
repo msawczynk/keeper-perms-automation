@@ -1,0 +1,4 @@
+keepercommander>=17.0.0
+pydantic>=2.7
+python-dateutil>=2.9
+pre-commit>=3.7

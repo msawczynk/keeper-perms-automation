@@ -1,0 +1,14 @@
+# python
+__pycache__/
+.venv/
+*.pyc
+
+# tooling
+.perms/
+perms/template.csv
+perms/versions/
+.env
+
+# mac/windows
+.DS_Store
+Thumbs.db
