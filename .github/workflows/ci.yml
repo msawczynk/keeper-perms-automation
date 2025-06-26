@@ -1,0 +1,131 @@
+# CI pipeline for Keeper‑Perms‑Automation
+#
+# Stages:
+# 1. Lint & static checks via pre‑commit hooks
+# 2. Dry‑run importer against template.csv on pull requests
+# 3. Nightly reconcile job (schedule) – fails if vault drift detected
+# 4. Manual apply job – protected by `workflow_dispatch` and an `approve` step
+#
+# Keeper credentials & folder UIDs **must** live in repo / org secrets:
+#   KPR_VAULT, KPR_DEVICE, META_FOLDER_UID, LOG_FOLDER_UID
+# Only `reconcile` and `apply` require them. `lint` is public‑safe.
+#
+name: keeper‑perms‑ci
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  schedule:
+    # nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      csv_path:
+        description: "CSV to apply (relative path)"
+        required: false
+        default: "perms/template.csv"
+      immutable:
+        description: "Set IMMUTABLE_RECORDS=1? (default yes)"
+        required: false
+        default: "yes"
+
+# abort duplicate runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # no extra permissions; jobs that push to vault use secrets only
+
+jobs:
+  lint:
+    name: pre‑commit lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pre-commit
+          pip install -r requirements.txt
+      - name: run pre‑commit
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  dry-run:
+    if: github.event_name == 'pull_request'
+    needs: lint
+    runs-on: ubuntu-latest
+    name: dry‑run importer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: dry‑run against template.csv
+        env:
+          KPR_VAULT: ${{ secrets.KPR_VAULT }}
+          KPR_DEVICE: ${{ secrets.KPR_DEVICE }}
+          META_FOLDER_UID: ${{ secrets.META_FOLDER_UID }}
+          LOG_FOLDER_UID: ${{ secrets.LOG_FOLDER_UID }}
+        run: |
+          python cli.py dry-run --csv perms/template.csv
+
+  reconcile:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    needs: lint
+    name: nightly reconcile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: run reconcile
+        env:
+          KPR_VAULT: ${{ secrets.KPR_VAULT }}
+          KPR_DEVICE: ${{ secrets.KPR_DEVICE }}
+          META_FOLDER_UID: ${{ secrets.META_FOLDER_UID }}
+          LOG_FOLDER_UID: ${{ secrets.LOG_FOLDER_UID }}
+        run: python cli.py reconcile
+
+  apply:
+    # Manual + protected deploy – never auto‑runs
+    if: github.event_name == 'workflow_dispatch'
+    needs: [lint]
+    runs-on: ubuntu-latest
+    name: apply to vault (manual)
+    environment:
+      name: production
+      url: https://keepersecurity.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: optional immutable toggle
+        run: echo "IMMUTABLE_RECORDS=${{ github.event.inputs.immutable }}" >> $GITHUB_ENV
+      - name: live apply importer
+        env:
+          KPR_VAULT: ${{ secrets.KPR_VAULT }}
+          KPR_DEVICE: ${{ secrets.KPR_DEVICE }}
+          META_FOLDER_UID: ${{ secrets.META_FOLDER_UID }}
+          LOG_FOLDER_UID: ${{ secrets.LOG_FOLDER_UID }}
+        run: |
+          python cli.py apply --csv ${{ github.event.inputs.csv_path }}
