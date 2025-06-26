@@ -1,11 +1,11 @@
-# GitHub Actions – CI/CD for Keeper-Perms-Automation (v2)
-# ------------------------------------------------------
-# Changes v2 (2025‑06‑26):
-#   • Added explicit `pre-commit autoupdate --install-hooks` to avoid hook deprecation errors.
-#   • Cache pre‑commit env between runs for speed.
-#   • Ensured `--show-diff-on-failure` flag passes through.
-#   • Minor matrix-ready structure for future Python versions.
-# ------------------------------------------------------
+# GitHub Actions – CI/CD for Keeper‑Perms‑Automation (v3)
+# -------------------------------------------------------
+# v3 (2025‑06‑26):
+#   • Dropped the `pre-commit autoupdate` step — hooks are now pinned via
+#     .pre-commit-config.yaml, so no missing‑hook errors.
+#   • Keeps `pre-commit install-hooks` to cache environments.
+#   • No other functional changes.
+# -------------------------------------------------------
 name: keeper-perms-ci
 
 on:
@@ -13,8 +13,7 @@ on:
     branches: ["main"]
   pull_request:
   schedule:
-    # Nightly reconcile at 02:00 UTC
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * *"   # nightly reconcile @ 02:00 UTC
   workflow_dispatch:
     inputs:
       csv_path:
@@ -45,15 +44,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pre-commit
           pip install -r requirements.txt
-      - name: Pre‑commit autoupdate + install hooks
-        run: |
-          pre-commit autoupdate --repo https://github.com/pre-commit/pre-commit-hooks
-          pre-commit install-hooks
+      - name: Install pre‑commit hooks (cached)
+        run: pre-commit install-hooks
       - name: Run pre‑commit
         run: pre-commit run --all-files --show-diff-on-failure
 
@@ -67,7 +64,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install runtime deps
+      - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -89,7 +86,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install runtime deps
+      - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -114,11 +111,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install runtime deps
+      - name: Install runtime dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Set immutable flag in env
+      - name: Set IMMUTABLE_RECORDS env
         run: echo "IMMUTABLE_RECORDS=${{ github.event.inputs.immutable }}" >> $GITHUB_ENV
       - name: Live apply importer
         env:
