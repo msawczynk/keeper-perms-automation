@@ -21,7 +21,7 @@ vault and lets you map which **teams** should have access to which **records**.
 
 ## 2. download & install
 
-1. **Download this zip** (see the download link in ChatGPT) and **extract** it
+1. **Download this zip** and **extract** it
    somewhere convenient, e.g. `C:\keeper-perms`.
 2. Open **PowerShell**  
    *Start ▶ type “PowerShell” ▶ *Run as Administrator* (optional).*
