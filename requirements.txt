@@ -1,1 +1,13 @@
-keepercommander>=17.1.2
+keepercommander
+rich
+typer[all]
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Optional: for better CLI experience
+click>=8.0.0

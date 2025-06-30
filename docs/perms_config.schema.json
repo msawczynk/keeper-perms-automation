@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://keeper.io/schemas/perms-config.json",
+  "title": "Keeper Permissions Configuration",
+  "description": "Configuration schema for Keeper Permissions Automation System",
+  "type": "object",
+  "properties": {
+    "root_folder_name": {
+      "type": "string",
+      "default": "[Perms]",
+      "description": "Name of the root folder for permissions management (created as user folder, not shared)"
+    },
+    "included_teams": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "uniqueItems": true
+        }
+      ],
+      "default": null,
+      "description": "Optional list of team UIDs to include. If null, all teams are included."
+    },
+    "included_folders": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "uniqueItems": true
+        }
+      ],
+      "default": null,
+      "description": "Optional list of folder UIDs to include. If null, all folders are included."
+    },
+    "excluded_folders": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "List of folder UIDs to exclude from permissions management"
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "root_folder_name": "[Perms]",
+      "included_teams": null,
+      "included_folders": null,
+      "excluded_folders": []
+    },
+    {
+      "root_folder_name": "[Company Permissions]",
+      "included_teams": ["TEAM_UID_1", "TEAM_UID_2"],
+      "included_folders": ["FOLDER_UID_A", "FOLDER_UID_B"],
+      "excluded_folders": ["FOLDER_UID_SENSITIVE"]
+    }
+  ]
+} 
