@@ -2,14 +2,38 @@
 
 ### 1. Overview
 
-This document outlines the low-level design for a system that automates the provisioning of Keeper record permissions to teams by managing a mirrored, team-specific shared folder structure.
+This document outlines the low-level design for a system that automates the provisioning of Keeper record permissions to teams by managing a **per-team mirrored folder structure**.
 
 **Core Principles:**
 *   **Atomicity:** Each module has a single, well-defined responsibility.
 *   **Idempotency:** Running the `apply` command multiple times with the same input will result in the same final state without causing errors.
 *   **Configuration as Code:** All tool configuration will be stored within the Keeper vault itself.
 *   **No Data Duplication:** Original records are never copied, only shared.
-*   **Root Folder Is Not Shared:** The top-level management folder (`[Perms]`) is created/kept as a regular *user* folder; only its descendant folders are provisioned as Shared Folders to mirror the original hierarchy and carry permissions.
+*   **Per-Team Isolation:** Each team gets its own complete folder structure mirror under a shared folder they can access.
+*   **Root Folder Is Private:** The top-level management folder (`[Perms]`) is created as a regular *user* folder; team-specific shared folders are created underneath it.
+
+### 2. Per-Team Folder Structure
+
+**NEW ARCHITECTURE (Per-Team Structure):**
+```
+[Perms] (private root folder)
+├── TeamA (shared folder) ← Team A has access
+│   └── Clients/Client1/Development/Servers (private subfolders)
+│       └── Records shared with Team A permissions
+├── TeamB (shared folder) ← Team B has access  
+│   └── Clients/Client1/Development/Servers (private subfolders)
+│       └── Records shared with Team B permissions
+└── TeamC (shared folder) ← Team C has access
+    └── Clients/Client2/Production/Database (private subfolders)
+        └── Records shared with Team C permissions
+```
+
+**Key Benefits:**
+- ✅ **Teams can only access their own folder structure**
+- ✅ **Perfect isolation between teams**
+- ✅ **Complete folder hierarchy mirrored for each team**
+- ✅ **Team permissions work correctly on shared folders**
+- ✅ **Scalable to any number of teams**
 
 ### 2. Implementation Roadmap
 
@@ -176,27 +200,39 @@ This section details the specific rules, schemas, and algorithms for the MVP.
 ```
 > The formal JSON-Schema definition lives at [`/docs/perms_config.schema.json`](docs/perms_config.schema.json) and is version-controlled for tooling integration. ✅ **IMPLEMENTED**
 
-##### 2.6.3 Mirroring Algorithm ✅ IMPLEMENTED
-1. Ensure root user folder `${root_folder_name}` exists (**not shared**).
-2. For each `folder_path` in the CSV, create/locate the equivalent hierarchy *as shared folders* under the root. Missing intermediate components are auto-created as shared folders.
-3. Link the record to the deepest shared folder.
-4. Apply team permissions according to the mapping table above.
+##### 2.6.3 Per-Team Mirroring Algorithm ✅ IMPLEMENTED
+1. Ensure root user folder `${root_folder_name}` exists (**private user folder**).
+2. For each team that has permissions on a record:
+   a. Create/locate team-specific shared folder under root: `[Perms]/TeamName`
+   b. Create/locate the complete `folder_path` hierarchy as **private subfolders** under the team's shared folder
+   c. Share the record to the deepest folder in the team's hierarchy
+   d. Apply team permissions to the team's shared folder
+3. Result: Each team gets their own complete mirrored folder structure with proper isolation.
 
 ```mermaid
 graph TD
-    R[[Root: [Perms] (user folder)]]
-    subgraph Mirrored Shared Folders
-        S1[Finance]:::sf --> S2[Payroll]:::sf
-        S1 --> S3[Benefits]:::sf
+    R[[Root: [Perms] (private user folder)]]
+    subgraph Team A Structure
+        TA[TeamA]:::sf --> TA1[Clients]:::pf
+        TA1 --> TA2[Client1]:::pf
+        TA2 --> TA3[Development]:::pf
+        TA3 --> TA4[Servers]:::pf
+    end
+    subgraph Team B Structure  
+        TB[TeamB]:::sf --> TB1[Clients]:::pf
+        TB1 --> TB2[Client1]:::pf
+        TB2 --> TB3[Development]:::pf
+        TB3 --> TB4[Servers]:::pf
     end
     subgraph Records
-        REC1[Record: Employee Data]:::rec
-        REC2[Record: Benefits Policy]:::rec
+        REC1[Record: Dev Server]:::rec
     end
-    R --> S1
-    REC1 -.->|linked to| S2
-    REC2 -.->|linked to| S3
+    R --> TA
+    R --> TB
+    REC1 -.->|shared to TeamA| TA4
+    REC1 -.->|shared to TeamB| TB4
     classDef sf fill:#ffffff,stroke:#00b2ff,stroke-width:2px
+    classDef pf fill:#f0f0f0,stroke:#666666,stroke-width:1px
     classDef rec fill:#fff2cc,stroke:#d6b656,stroke-width:1px
 ```
 

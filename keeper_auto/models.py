@@ -274,11 +274,7 @@ class VaultData:
     records_by_uid: Dict[str, Record] = field(default_factory=dict)
     folders_by_uid: Dict[str, VaultFolder] = field(default_factory=dict)
     
-    _loaded: bool = False
-
-    def __init__(self):
-        """Initializes the VaultData object."""
-        self.clear()
+    _loaded: bool = field(default=False)
 
     def add_team(self, uid: str, name: str) -> Team:
         """Adds a team to the vault data."""

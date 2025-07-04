@@ -18,7 +18,6 @@ from typing import Optional, List
 
 import typer
 from rich.console import Console
-from rich.table import Table
 
 from keeper_auto.services import (
     ConfigService,
@@ -29,7 +28,7 @@ from keeper_auto.services import (
 )
 from keeper_auto.logger import init_logger
 from keeper_auto.checkpoint import create_checkpoint_manager
-from keeper_auto.models import ConfigRecord, VaultData
+from keeper_auto.models import ConfigRecord
 
 app = typer.Typer(name="keeper-perms", help="Automate Keeper permissions provisioning.")
 console = Console()
@@ -89,7 +88,10 @@ def template(
     cfg = _load_config_or_exit(config_uid)
 
     vault_service = VaultService(cfg)
-    vault_data: VaultData = vault_service.load_vault_data()  # type: ignore
+    vault_data = vault_service.load_vault_data()
+    if vault_data is None:
+        console.print("❌ Failed to load vault data.", style="bold red")
+        raise typer.Exit(code=1)
 
     TemplateService(vault_data, cfg).generate_template(output_file)
     console.print(f"✅ Template written to [cyan]{output_file.resolve()}[/cyan]", style="bold green")
@@ -141,6 +143,9 @@ def dry_run(
 
     logger = init_logger()
     vault_data = VaultService(cfg).load_vault_data()
+    if vault_data is None:
+        console.print("❌ Failed to load vault data.", style="bold red")
+        raise typer.Exit(code=1)
     ops: List[str] = ProvisioningService(vault_data, cfg, logger).dry_run(file)
 
     console.print(f"--- Proposed operations ({len(ops)}) ---", style="bold blue")
@@ -183,14 +188,17 @@ def apply(
     run_id = str(uuid.uuid4())[:8]
     logger = init_logger(run_id=run_id)
     checkpoint = create_checkpoint_manager(run_id=run_id)
-    checkpoint.start_checkpoint(str(file), total_operations=row_count)
+    checkpoint.create_checkpoint({"csv_path": str(file), "total_operations": row_count})
 
     vault_data = VaultService(cfg).load_vault_data()
+    if vault_data is None:
+        console.print("❌ Failed to load vault data.", style="bold red")
+        raise typer.Exit(code=1)
     prov = ProvisioningService(vault_data, cfg, logger)
 
     console.print("🚀 Applying changes…", style="cyan")
     success = prov.apply_changes(file, max_records, force)
-    checkpoint.finalize_checkpoint()
+    checkpoint.complete_checkpoint()
 
     if success:
         console.print("✅ Apply completed successfully!", style="bold green")

@@ -12,7 +12,6 @@ from pathlib import Path
 from getpass import getpass
 from keepercommander import api, params, generator      # type: ignore
 from typing import List, Dict, Any, Optional
-from keepercommander import crypto
 
 CONF_PATH = Path(
     os.getenv("KPR_CONF", r"~/.config/keeper/commander/automation.json")
@@ -128,25 +127,26 @@ def get_teams() -> List[Dict[str, Any]]:
     teams: List[Dict[str, Any]] = []
     
     try:
-        # Get teams using Keeper Commander API
-        if hasattr(sdk, 'team_cache') and sdk.team_cache:  # type: ignore
-            for team_uid, team_data in sdk.team_cache.items():  # type: ignore
+        # Use the API to get available teams with actual names
+        from keepercommander import api  # type: ignore
+        rq = {'command': 'get_available_teams'}
+        rs = api.communicate(sdk, rq)  # type: ignore
+        
+        if rs.get('result') == 'success' and 'teams' in rs:
+            for team in rs['teams']:  # type: ignore
                 teams.append({
-                    'team_uid': team_uid,
-                    'team_name': getattr(team_data, 'name', f'Team {team_uid}'),  # type: ignore
-                    'team_key': getattr(team_data, 'team_key', None),  # type: ignore
+                    'team_uid': team.get('team_uid', ''),
+                    'team_name': team.get('team_name', f"Team {team.get('team_uid', 'Unknown')}"),
+                    'team_key': team.get('team_key', None),
                 })
         else:
-            # Fallback: try to get teams via API call
-            from keepercommander import api  # type: ignore
-            rq = {'command': 'get_available_teams'}
-            rs = api.communicate(sdk, rq)  # type: ignore
-            if rs.get('result') == 'success' and 'teams' in rs:
-                for team in rs['teams']:  # type: ignore
+            # Fallback: try to get teams from cache
+            if hasattr(sdk, 'team_cache') and sdk.team_cache:  # type: ignore
+                for team_uid, team_data in sdk.team_cache.items():  # type: ignore
                     teams.append({
-                        'team_uid': team.get('team_uid', ''),  # type: ignore
-                        'team_name': team.get('name', f"Team {team.get('team_uid', 'Unknown')}"),  # type: ignore
-                        'team_key': team.get('team_key', None),  # type: ignore
+                        'team_uid': team_uid,
+                        'team_name': getattr(team_data, 'name', f'Team {team_uid}'),  # type: ignore
+                        'team_key': getattr(team_data, 'team_key', None),  # type: ignore
                     })
     except Exception as e:
         print(f"Warning: Could not retrieve teams: {e}")
@@ -174,16 +174,31 @@ def get_records() -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     
     try:
+        from keepercommander import api  # type: ignore
+        
         if hasattr(sdk, 'record_cache') and sdk.record_cache:  # type: ignore
             for rec_uid, rec_data in sdk.record_cache.items():  # type: ignore
-                # Extract record information
-                record_info = {
-                    'uid': rec_uid,
-                    'title': getattr(rec_data, 'title', f'Record {rec_uid}'),  # type: ignore
-                    'folder_uid': getattr(rec_data, 'folder_uid', None),  # type: ignore
-                    'shared': getattr(rec_data, 'shared', False),  # type: ignore
-                }
-                records.append(record_info)
+                try:
+                    # Get the actual record with decrypted data
+                    record = api.get_record(sdk, rec_uid)  # type: ignore
+                    
+                    # Extract record information
+                    record_info = {
+                        'uid': rec_uid,
+                        'title': getattr(record, 'title', f'Record {rec_uid}'),
+                        'folder_uid': rec_data.get('folder_uid', None),
+                        'shared': rec_data.get('shared', False),
+                    }
+                    records.append(record_info)
+                except Exception as e:
+                    # Fallback to basic info if decryption fails
+                    record_info = {
+                        'uid': rec_uid,
+                        'title': f'Record {rec_uid}',
+                        'folder_uid': rec_data.get('folder_uid', None),
+                        'shared': rec_data.get('shared', False),
+                    }
+                    records.append(record_info)
     except Exception as e:
         print(f"Warning: Could not retrieve records: {e}")
     
@@ -485,53 +500,81 @@ def get_record(record_uid: str) -> Optional[Any]:
     return None
 
 
-def ensure_folder_path(path: str) -> Optional[str]:
+def ensure_team_folder_path(team_name: str, folder_path: str, root_folder_name: str = "[Perms]") -> Optional[str]:
     """
-    Ensures a folder path exists by creating any missing components.
-    Returns the UID of the final folder in the path.
+    Ensures a team-specific folder path exists by creating the structure:
+    [Perms] (private) -> TeamName (shared) -> folder_path (private subfolders)
     
-    According to design: Root folder ([Perms]) should be a regular user folder,
-    subsequent folders should be shared folders.
+    Returns the UID of the final folder in the team's path.
     """
     sdk = get_client()
     
     try:
-        # Split path into components
-        components = [c.strip() for c in path.split('/') if c.strip()]
-        if not components:
-            return None
+        # 1. Ensure root folder exists (private)
+        root_folder = find_folder_by_name(root_folder_name, parent_uid=None)
+        if not root_folder:
+            from keepercommander.commands.folder import FolderMakeCommand
+            cmd = FolderMakeCommand()
+            root_folder_uid = cmd.execute(
+                params=sdk,
+                folder=root_folder_name,
+                user_folder=True
+            )
+            print(f"✓ Created root user folder: {root_folder_name}")
+        else:
+            root_folder_uid = root_folder.get('uid')
+            print(f"✓ Found existing folder: {root_folder_name}")
         
-        current_parent_uid: Optional[str] = None
+        # 2. Ensure team shared folder exists under root
+        team_folder = find_folder_by_name(team_name, parent_uid=root_folder_uid)
+        if not team_folder:
+            team_folder_uid = create_shared_folder(team_name, parent_uid=root_folder_uid)
+            print(f"✓ Created team shared folder: {team_name}")
+        else:
+            team_folder_uid = team_folder.get('uid')
+            print(f"✓ Found existing team folder: {team_name}")
         
-        # Process each path component
-        for i, component in enumerate(components):
-            # Check if folder already exists
+        # 3. Create the folder path under the team's shared folder
+        # All folders under the team folder are private subfolders
+        path_components = [c.strip() for c in folder_path.split('/') if c.strip()]
+        current_parent_uid = team_folder_uid
+        
+        for component in path_components:
             existing_folder = find_folder_by_name(component, parent_uid=current_parent_uid)
             
             if existing_folder:
                 current_parent_uid = existing_folder.get('uid')
                 print(f"✓ Found existing folder: {component}")
             else:
-                # Create new folder
-                # First component (root like [Perms]) should be user folder
-                # Subsequent components should be shared folders
-                if i == 0 and component.startswith('[') and component.endswith(']'):
-                    # Root management folder - create as user folder
-                    from keepercommander.commands.folder import FolderMakeCommand
-                    cmd = FolderMakeCommand()
+                # Create as private subfolder within the shared team folder
+                from keepercommander.commands.folder import FolderMakeCommand
+                cmd = FolderMakeCommand()
+                
+                # Set current folder context to the parent
+                original_current_folder = sdk.current_folder
+                sdk.current_folder = current_parent_uid
+                
+                try:
                     current_parent_uid = cmd.execute(
                         params=sdk,
                         folder=component,
-                        user_folder=True
+                        user_folder=True  # Private subfolder within shared folder
                     )
-                    print(f"✓ Created root user folder: {component}")
-                else:
-                    # Create as shared folder
-                    current_parent_uid = create_shared_folder(component, parent_uid=current_parent_uid)
-                    print(f"✓ Created shared folder: {component}")
+                    # Force sync to update folder cache
+                    from keepercommander.commands.utils import SyncDownCommand
+                    sync_cmd = SyncDownCommand()
+                    sync_cmd.execute(sdk)
+                    print(f"✓ Created private subfolder: {component}")
+                finally:
+                    # Restore original context
+                    sdk.current_folder = original_current_folder
         
         return current_parent_uid
         
     except Exception as e:
-        print(f"❌ Error ensuring folder path '{path}': {e}")
+        print(f"❌ Error ensuring team folder path '{team_name}/{folder_path}': {e}")
         return None
+
+
+# Old ensure_folder_path function removed - replaced with ensure_team_folder_path
+# for per-team folder structure implementation
