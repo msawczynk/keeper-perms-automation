@@ -1,0 +1,26 @@
+{"ts":"2025-07-04T03:07:33.438590+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"test (XD6HWsVSL8oVaQyAeoM3vA)"}}
+{"ts":"2025-07-04T03:07:34.991117+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Switzerland IPallow (Hl8_3YaUW6c-qtlln2oogA)"}}
+{"ts":"2025-07-04T03:07:36.584007+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Afghanistan IPallow (URYRjPOOyoO87zrgP5LybQ)"}}
+{"ts":"2025-07-04T03:07:36.664816+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Demos (nXDSBcxzZB1nMaW2pZy82A)"}}
+{"ts":"2025-07-04T03:07:36.740761+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Switzerland IPallow (Hl8_3YaUW6c-qtlln2oogA)"}}
+{"ts":"2025-07-04T03:07:38.190568+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"test (XD6HWsVSL8oVaQyAeoM3vA)"}}
+{"ts":"2025-07-04T03:07:38.276250+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"disable edit (TdcQTis6YPLkHTNrovvr9g)"}}
+{"ts":"2025-07-04T03:07:38.352802+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Keeper Secrets Manager (wgGAgWrFB9LVKUB3twBKVA)"}}
+{"ts":"2025-07-04T03:07:39.749931+00:00","run_id":"54b9867d","level":"warning","event":"unknown_team","data":{"team_name":"Aland Islands IPallow (9ED2hNua2Z0zCfpyyduCRg)"}}
+{"ts":"2025-07-04T03:13:18.864404+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"enable edit (glCjI2puQSVsAzaeLp99aQ)"}}
+{"ts":"2025-07-04T03:13:20.323693+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Austria IPallow (xTbKWvjltXmbyBV8DSUxlw)"}}
+{"ts":"2025-07-04T03:13:21.778240+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Zambia IPallow (aAsRG22ZTJP1Co0mSlG_yA)"}}
+{"ts":"2025-07-04T03:13:21.884933+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"test (XD6HWsVSL8oVaQyAeoM3vA)"}}
+{"ts":"2025-07-04T03:13:23.351137+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Admin Team (C9uJhC_nUi0q3OuOLx8vVg)"}}
+{"ts":"2025-07-04T03:13:23.452759+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"sfdc admins (lG8yEDBYf2AtSviOoSE9rQ)"}}
+{"ts":"2025-07-04T03:13:24.873634+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Admin Team (C9uJhC_nUi0q3OuOLx8vVg)"}}
+{"ts":"2025-07-04T03:13:24.970587+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Austria IPallow (xTbKWvjltXmbyBV8DSUxlw)"}}
+{"ts":"2025-07-04T03:13:25.061806+00:00","run_id":"19f066df","level":"warning","event":"unknown_team","data":{"team_name":"Switzerland IPallow (Hl8_3YaUW6c-qtlln2oogA)"}}
+{"ts":"2025-07-04T08:27:21.164536+00:00","run_id":"c08c55ee","level":"error","event":"share_record_failed","data":{"record_uid":"cd06z-QqD8O1clG5hASgNA","team":"Admin Team","folder_uid":"mXOtF54Bef6MdP2PxoENPw","error":"Destination folder mXOtF54Bef6MdP2PxoENPw not found"}}
+{"ts":"2025-07-04T08:27:24.804984+00:00","run_id":"c08c55ee","level":"error","event":"share_record_failed","data":{"record_uid":"cd06z-QqD8O1clG5hASgNA","team":"test","folder_uid":"BKStnHIPuviTP2-C7fg-mw","error":"Destination folder BKStnHIPuviTP2-C7fg-mw not found"}}
+{"ts":"2025-07-04T08:27:28.566281+00:00","run_id":"c08c55ee","level":"error","event":"share_record_failed","data":{"record_uid":"p4aON3q0kckkPAbRsJQTjw","team":"Switzerland IPallow","folder_uid":"qDdly88UjJrd24CNniRUww","error":"Destination folder qDdly88UjJrd24CNniRUww not found"}}
+{"ts":"2025-07-04T08:27:30.793822+00:00","run_id":"c08c55ee","level":"error","event":"share_record_failed","data":{"record_uid":"p4aON3q0kckkPAbRsJQTjw","team":"test","folder_uid":"MZOweLxtTEMkGsO9smnFUw","error":"Destination folder MZOweLxtTEMkGsO9smnFUw not found"}}
+{"ts":"2025-07-04T09:27:55.233336+00:00","run_id":"test-logger-123","level":"info","event":"test_operation","data":{"operation":"vault_storage_test","success":true}}
+{"ts":"2025-07-04T09:28:01.548220+00:00","run_id":"test-logger-123","level":"warning","event":"test_warning","data":{"message":"This is a test warning"}}
+{"ts":"2025-07-04T09:28:03.406803+00:00","run_id":"test-logger-123","level":"error","event":"test_error","data":{"message":"This is a test error"}}
+{"ts":"2025-07-04T09:28:05.131223+00:00","run_id":"test-logger-123","level":"info","event":"vault_storage","data":{"event_type":"operation_report","record_uid":"gladMdAQKRzMjb95UvrbjA","success":true}}

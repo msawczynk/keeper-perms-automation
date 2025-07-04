@@ -578,3 +578,156 @@ def ensure_team_folder_path(team_name: str, folder_path: str, root_folder_name: 
 
 # Old ensure_folder_path function removed - replaced with ensure_team_folder_path
 # for per-team folder structure implementation
+
+def create_record(record_data: Dict[str, Any], folder_uid: Optional[str] = None) -> str:
+    """Create a new record in the vault."""
+    sdk = get_client()
+    
+    try:
+        from keepercommander import api, vault, record_management  # type: ignore
+        from keepercommander.subfolder import find_folders
+        
+        # Create a new record
+        record = vault.KeeperRecord.create(sdk, 'login')
+        record.title = record_data.get('title', 'Untitled Record')
+        
+        # Add custom fields from record_data
+        if 'fields' in record_data:
+            for field_data in record_data['fields']:
+                field_type = field_data.get('type', 'text')
+                field_label = field_data.get('label', '')
+                field_value = field_data.get('value', '')
+                
+                if field_type == 'multiline':
+                    field = vault.TypedField.new_field('multiline', field_value, field_label)
+                elif field_type == 'text':
+                    field = vault.TypedField.new_field('text', field_value, field_label)
+                else:
+                    field = vault.TypedField.new_field('text', field_value, field_label)
+                
+                record.fields.append(field)
+        
+        # Add the record to the vault
+        record_management.add_record_to_folder(sdk, record, folder_uid)
+        
+        # Force sync to update cache
+        api.sync_down(sdk)
+        
+        return record.record_uid
+        
+    except Exception as e:
+        print(f"Error creating record: {e}")
+        raise e
+
+
+def update_record(record_uid: str, record_data: Dict[str, Any]) -> None:
+    """Update an existing record in the vault."""
+    sdk = get_client()
+    
+    try:
+        from keepercommander import api, vault  # type: ignore
+        
+        # Get the existing record
+        record = get_record(record_uid)
+        if not record:
+            raise Exception(f"Record {record_uid} not found")
+        
+        # Update the title if provided
+        if 'title' in record_data:
+            record.title = record_data['title']
+        
+        # Update fields if provided
+        if 'fields' in record_data:
+            # Clear existing custom fields
+            record.fields = [f for f in record.fields if f.type in ('login', 'password', 'url')]
+            
+            # Add new fields
+            for field_data in record_data['fields']:
+                field_type = field_data.get('type', 'text')
+                field_label = field_data.get('label', '')
+                field_value = field_data.get('value', '')
+                
+                if field_type == 'multiline':
+                    field = vault.TypedField.new_field('multiline', field_value, field_label)
+                elif field_type == 'text':
+                    field = vault.TypedField.new_field('text', field_value, field_label)
+                else:
+                    field = vault.TypedField.new_field('text', field_value, field_label)
+                
+                record.fields.append(field)
+        
+        # Update the record
+        record_management.update_record(sdk, record)
+        
+        # Force sync to update cache
+        api.sync_down(sdk)
+        
+    except Exception as e:
+        print(f"Error updating record {record_uid}: {e}")
+        raise e
+
+
+def find_records_by_title(title: str) -> List[Dict[str, Any]]:
+    """Find records by title."""
+    sdk = get_client()
+    
+    try:
+        # Ensure we have the latest data
+        from keepercommander import api  # type: ignore
+        api.sync_down(sdk)
+        
+        matching_records = []
+        
+        # Search through all records
+        if hasattr(sdk, 'record_cache') and sdk.record_cache:
+            for record_uid, record_data in sdk.record_cache.items():
+                if hasattr(record_data, 'title') and record_data.title == title:
+                    matching_records.append({
+                        'record_uid': record_uid,
+                        'title': record_data.title
+                    })
+        
+        return matching_records
+        
+    except Exception as e:
+        print(f"Error finding records by title '{title}': {e}")
+        return []
+
+
+def ensure_folder_path(folder_path: str) -> str:
+    """Ensure a folder path exists and return the folder UID."""
+    sdk = get_client()
+    
+    try:
+        from keepercommander.commands.folder import FolderMakeCommand
+        from keepercommander import api  # type: ignore
+        
+        # Split the path into components
+        path_parts = [part.strip() for part in folder_path.split('/') if part.strip()]
+        
+        if not path_parts:
+            raise Exception("Empty folder path")
+        
+        current_folder_uid = None
+        
+        # Create each folder in the path
+        for i, folder_name in enumerate(path_parts):
+            # Check if folder already exists
+            existing_folder = find_folder_by_name(folder_name, current_folder_uid)
+            
+            if existing_folder:
+                current_folder_uid = existing_folder['uid']
+            else:
+                # Create the folder
+                if i == 0:
+                    # First folder - create as user folder
+                    current_folder_uid = create_shared_folder(folder_name, current_folder_uid)
+                else:
+                    # Subsequent folders - create as subfolders
+                    current_folder_uid = create_shared_folder(folder_name, current_folder_uid)
+        
+        return current_folder_uid
+        
+    except Exception as e:
+        print(f"Error ensuring folder path '{folder_path}': {e}")
+        raise e

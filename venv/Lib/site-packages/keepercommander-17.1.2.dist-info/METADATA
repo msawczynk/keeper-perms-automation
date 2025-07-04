@@ -1,0 +1,63 @@
+Metadata-Version: 2.4
+Name: keepercommander
+Version: 17.1.2
+Summary: Keeper Commander for Python 3
+Home-page: https://keepersecurity.com/
+Download-URL: https://github.com/Keeper-Security/Commander/releases
+Author: Craig Lurey
+Author-email: craig@keepersecurity.com
+License: MIT
+Keywords: security,password
+Classifier: Environment :: Console
+Classifier: Development Status :: 4 - Beta
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Topic :: Security
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: asciitree
+Requires-Dist: bcrypt
+Requires-Dist: colorama
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: fido2>=2.0.0; python_version >= "3.10"
+Requires-Dist: flask; python_version >= "3.8"
+Requires-Dist: flask-limiter; python_version >= "3.8"
+Requires-Dist: keeper-secrets-manager-core>=16.6.0
+Requires-Dist: prompt_toolkit
+Requires-Dist: protobuf>=4.23.0
+Requires-Dist: psutil; python_version >= "3.8"
+Requires-Dist: pycryptodomex>=3.20.0
+Requires-Dist: pyngrok; python_version >= "3.8"
+Requires-Dist: pyperclip
+Requires-Dist: pysocks
+Requires-Dist: python-dotenv
+Requires-Dist: requests>=2.31.0
+Requires-Dist: tabulate
+Requires-Dist: websockets
+Requires-Dist: aiortc; python_version >= "3.8"
+Requires-Dist: pydantic>=2.6.4; python_version >= "3.8"
+Requires-Dist: fpdf2>=2.8.3
+Provides-Extra: test
+Requires-Dist: pytest; extra == "test"
+Requires-Dist: testfixtures; extra == "test"
+Dynamic: download-url
+Dynamic: license-file
+
+![Keeper Commander](https://raw.githubusercontent.com/Keeper-Security/Commander/master/images/commander-black.png)
+
+### About Keeper Commander
+Keeper Commander is a command-line and SDK interface to Keeper® Password Manager. Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and partners.
+
+### Documentation 
+To read the Keeper Commander documentation please click here:
+
+[https://docs.keeper.io/secrets-manager/commander-cli/overview](https://docs.keeper.io/secrets-manager/commander-cli/overview)
+
+### About Keeper Security
+Keeper is the leading cybersecurity platform for preventing password-related data breaches and cyberthreats.
+
+Learn More at:
+[https://keepersecurity.com](https://keepersecurity.com)

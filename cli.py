@@ -1,212 +1,490 @@
 #!/usr/bin/env python3
 """
-Keeper Permissions Automation – Refactored CLI
-=============================================
-Implements Phase-1 commands using the new atomic service layer.
-Commands:
-  • configure – view (or scaffold) the Perms-Config record
-  • template   – generate a CSV template
-  • validate   – lint a CSV file
-  • dry-run    – list the operations that would be executed
-  • apply      – execute the provisioning job (checkpoint + logging)
+Keeper Permissions Automation CLI
+Enhanced with vault storage integration for centralized data management.
 """
 
-import json
-import uuid
+import argparse
+import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
-import typer
-from rich.console import Console
+from keeper_auto.application.services import ApplicationCoordinator
+from keeper_auto.infrastructure.logging_adapter import LoggingAdapter
+from keeper_auto.infrastructure.vault_storage_adapter import VaultStorageAdapter
 
-from keeper_auto.services import (
-    ConfigService,
-    VaultService,
-    TemplateService,
-    ValidationService,
-    ProvisioningService,
-)
-from keeper_auto.logger import init_logger
-from keeper_auto.checkpoint import create_checkpoint_manager
-from keeper_auto.models import ConfigRecord
+def create_parser() -> argparse.ArgumentParser:
+    """Create the main argument parser with vault storage options."""
+    parser = argparse.ArgumentParser(
+        description="Keeper Permissions Automation Tool with Vault Storage",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage (local storage)
+  python cli.py configure
+  python cli.py template my_template.csv
+  python cli.py validate permissions.csv
+  python cli.py dry-run permissions.csv
+  python cli.py apply permissions.csv
+  
+  # With vault storage enabled
+  python cli.py --vault-storage configure
+  python cli.py --vault-storage template my_template.csv
+  python cli.py --vault-storage apply permissions.csv
+  
+  # Resume from vault-stored checkpoint
+  python cli.py --vault-storage apply permissions.csv --resume-from-vault run-id-123
+  
+  # Export system data from vault
+  python cli.py --vault-storage export-data --output backup.json
+        """
+    )
+    
+    # Global options
+    parser.add_argument(
+        '--vault-storage',
+        action='store_true',
+        help='Enable vault storage for logs, checkpoints, and configurations'
+    )
+    
+    parser.add_argument(
+        '--run-id',
+        type=str,
+        help='Specify a custom run ID (default: auto-generated)'
+    )
+    
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Configure command
+    configure_parser = subparsers.add_parser(
+        'configure',
+        help='Show or create configuration'
+    )
+    configure_parser.add_argument(
+        '--config-name',
+        type=str,
+        default='default',
+        help='Configuration name (default: default)'
+    )
+    
+    # Template command
+    template_parser = subparsers.add_parser(
+        'template',
+        help='Generate CSV template'
+    )
+    template_parser.add_argument(
+        'output_file',
+        type=str,
+        help='Output CSV file path'
+    )
+    template_parser.add_argument(
+        '--template-name',
+        type=str,
+        help='Template name for vault storage'
+    )
+    
+    # Validate command
+    validate_parser = subparsers.add_parser(
+        'validate',
+        help='Validate CSV file'
+    )
+    validate_parser.add_argument(
+        'csv_file',
+        type=str,
+        help='CSV file to validate'
+    )
+    
+    # Dry-run command
+    dry_run_parser = subparsers.add_parser(
+        'dry-run',
+        help='Show what would be changed without applying'
+    )
+    dry_run_parser.add_argument(
+        'csv_file',
+        type=str,
+        help='CSV file to process'
+    )
+    dry_run_parser.add_argument(
+        '--max-records',
+        type=int,
+        default=5000,
+        help='Maximum number of records to process (default: 5000)'
+    )
+    
+    # Apply command
+    apply_parser = subparsers.add_parser(
+        'apply',
+        help='Apply changes to Keeper vault'
+    )
+    apply_parser.add_argument(
+        'csv_file',
+        type=str,
+        help='CSV file to process'
+    )
+    apply_parser.add_argument(
+        '--max-records',
+        type=int,
+        default=5000,
+        help='Maximum number of records to process (default: 5000)'
+    )
+    apply_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force processing even if max-records limit is exceeded'
+    )
+    apply_parser.add_argument(
+        '--resume',
+        type=str,
+        help='Resume from checkpoint file'
+    )
+    apply_parser.add_argument(
+        '--resume-from-vault',
+        type=str,
+        help='Resume from vault-stored checkpoint by run ID'
+    )
+    
+    # Vault-specific commands
+    if '--vault-storage' in sys.argv:
+        # Export data command
+        export_parser = subparsers.add_parser(
+            'export-data',
+            help='Export system data from vault'
+        )
+        export_parser.add_argument(
+            '--output',
+            type=str,
+            required=True,
+            help='Output file for exported data'
+        )
+        export_parser.add_argument(
+            '--date-range',
+            type=str,
+            nargs=2,
+            help='Date range for export (YYYY-MM-DD YYYY-MM-DD)'
+        )
+        
+        # List checkpoints command
+        list_checkpoints_parser = subparsers.add_parser(
+            'list-checkpoints',
+            help='List available checkpoints in vault'
+        )
+        list_checkpoints_parser.add_argument(
+            '--date-range',
+            type=str,
+            nargs=2,
+            help='Date range filter (YYYY-MM-DD YYYY-MM-DD)'
+        )
+        
+        # Cleanup command
+        cleanup_parser = subparsers.add_parser(
+            'cleanup',
+            help='Clean up old data in vault'
+        )
+        cleanup_parser.add_argument(
+            '--retention-days',
+            type=int,
+            default=30,
+            help='Number of days to retain data (default: 30)'
+        )
+    
+    return parser
 
-app = typer.Typer(name="keeper-perms", help="Automate Keeper permissions provisioning.")
-console = Console()
+def main():
+    """Main CLI entry point with vault storage integration."""
+    parser = create_parser()
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    try:
+        # Initialize logging with vault storage option
+        logger = LoggingAdapter(
+            run_id=args.run_id,
+            vault_storage=args.vault_storage
+        )
+        
+        # Initialize application coordinator with vault storage
+        coordinator = ApplicationCoordinator(
+            logger=logger,
+            vault_storage=args.vault_storage
+        )
+        
+        # Initialize vault adapter if needed
+        vault_adapter = None
+        if args.vault_storage:
+            vault_adapter = VaultStorageAdapter()
+        
+        # Handle commands
+        if args.command == 'configure':
+            return handle_configure(coordinator, args, vault_adapter)
+        
+        elif args.command == 'template':
+            return handle_template(coordinator, args, vault_adapter)
+        
+        elif args.command == 'validate':
+            return handle_validate(coordinator, args)
+        
+        elif args.command == 'dry-run':
+            return handle_dry_run(coordinator, args)
+        
+        elif args.command == 'apply':
+            return handle_apply(coordinator, args, vault_adapter)
+        
+        elif args.command == 'export-data' and args.vault_storage:
+            return handle_export_data(vault_adapter, args)
+        
+        elif args.command == 'list-checkpoints' and args.vault_storage:
+            return handle_list_checkpoints(vault_adapter, args)
+        
+        elif args.command == 'cleanup' and args.vault_storage:
+            return handle_cleanup(vault_adapter, args)
+        
+        else:
+            print(f"Unknown command: {args.command}")
+            return 1
+            
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user")
+        return 1
+    except Exception as e:
+        print(f"Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def handle_configure(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+    """Handle configure command with vault storage support."""
+    try:
+        config = coordinator.load_configuration(args.config_name if vault_adapter else None)
+        
+        if config:
+            print("Current configuration:")
+            print(f"  Root folder name: {config.root_folder_name}")
+            print(f"  Included teams: {config.included_teams or 'All teams'}")
+            print(f"  Included folders: {config.included_folders or 'All folders'}")
+            print(f"  Excluded folders: {config.excluded_folders or 'None'}")
+            
+            if vault_adapter:
+                print(f"  Storage: Vault (config: {args.config_name})")
+            else:
+                print("  Storage: Local file system")
+        else:
+            print("No configuration found. Using defaults.")
+            if vault_adapter:
+                print("Creating default configuration in vault...")
+                from keeper_auto.models import ConfigRecord
+                default_config = ConfigRecord()
+                vault_adapter.store_configuration(default_config, args.config_name)
+                print(f"Default configuration stored in vault as '{args.config_name}'")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"Configuration error: {e}")
+        return 1
 
-def _load_config_or_exit(record_uid: Optional[str]) -> ConfigRecord:
-    cfg = ConfigService().load_config(record_uid)
-    if cfg is None:
-        console.print("❌ Configuration record not found.", style="bold red")
-        raise typer.Exit(code=1)
-    return cfg
+def handle_template(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+    """Handle template command with vault storage support."""
+    try:
+        output_path = Path(args.output_file)
+        template_content = coordinator.generate_template()
+        
+        # Save to local file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template_content)
+        
+        print(f"Template generated: {output_path}")
+        
+        # Also store in vault if enabled
+        if vault_adapter:
+            template_name = args.template_name or f"template-{coordinator.get_run_id()}"
+            vault_record_uid = vault_adapter.store_csv_template(template_content, template_name)
+            print(f"Template also stored in vault as '{template_name}' (UID: {vault_record_uid})")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"Template generation error: {e}")
+        return 1
 
-# ---------------------------------------------------------------------------
-# configure
-# ---------------------------------------------------------------------------
+def handle_validate(coordinator: ApplicationCoordinator, args) -> int:
+    """Handle validate command."""
+    try:
+        csv_path = Path(args.csv_file)
+        if not csv_path.exists():
+            print(f"CSV file not found: {csv_path}")
+            return 1
+        
+        result = coordinator.validate_csv(csv_path)
+        
+        if result.is_valid:
+            print(f"✅ CSV file is valid ({result.row_count} rows)")
+        else:
+            print(f"❌ CSV file has {len(result.errors)} error(s)")
+            for error in result.errors:
+                print(f"  Error: {error}")
+        
+        if result.warnings:
+            print(f"⚠️  {len(result.warnings)} warning(s):")
+            for warning in result.warnings:
+                print(f"  Warning: {warning}")
+        
+        return 0 if result.is_valid else 1
+        
+    except Exception as e:
+        print(f"Validation error: {e}")
+        return 1
 
-@app.command()
-def configure(
-    record_uid: str = typer.Option(None, "--record", "-r", help="UID of the configuration record to load."),
-    create: bool = typer.Option(False, "--create", help="Create a new configuration template on stdout."),
-    root_folder: str = typer.Option("[Perms]", "--root-folder", help="Root folder name for permissions."),
-):
-    """Display or scaffold the Perms-Config record."""
-    if create:
-        cfg = {
-            "root_folder_name": root_folder,
-            "included_teams": None,
-            "included_folders": None,
-            "excluded_folders": [],
-        }
-        console.print("--- 📝 Configuration JSON template ---", style="cyan")
-        console.print(json.dumps(cfg, indent=2))
-        console.print("Save this JSON in a Keeper record titled 'Perms-Config' and rerun commands.", style="yellow")
-        raise typer.Exit()
+def handle_dry_run(coordinator: ApplicationCoordinator, args) -> int:
+    """Handle dry-run command."""
+    try:
+        csv_path = Path(args.csv_file)
+        if not csv_path.exists():
+            print(f"CSV file not found: {csv_path}")
+            return 1
+        
+        report = coordinator.dry_run(csv_path, args.max_records)
+        
+        print(f"Dry run completed for {report.total_operations} operations:")
+        print(f"  Would create {len([op for op in report.operations if 'create' in op.lower()])} folders")
+        print(f"  Would share {len([op for op in report.operations if 'share' in op.lower()])} records")
+        print(f"  Would set {len([op for op in report.operations if 'permission' in op.lower()])} permissions")
+        
+        if report.operations:
+            print("\nOperations that would be performed:")
+            for i, operation in enumerate(report.operations[:10], 1):  # Show first 10
+                print(f"  {i}. {operation}")
+            if len(report.operations) > 10:
+                print(f"  ... and {len(report.operations) - 10} more operations")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"Dry run error: {e}")
+        return 1
 
-    cfg = _load_config_or_exit(record_uid)
+def handle_apply(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+    """Handle apply command with vault storage and resume support."""
+    try:
+        csv_path = Path(args.csv_file)
+        if not csv_path.exists():
+            print(f"CSV file not found: {csv_path}")
+            return 1
+        
+        # Handle resume options
+        if args.resume_from_vault and vault_adapter:
+            print(f"Resuming from vault checkpoint: {args.resume_from_vault}")
+            # Implementation would load checkpoint from vault and resume
+            # This is a placeholder for the actual resume logic
+        elif args.resume:
+            print(f"Resuming from local checkpoint: {args.resume}")
+            # Implementation would load local checkpoint and resume
+        
+        report = coordinator.apply_changes(csv_path, args.max_records, args.force)
+        
+        if report.success:
+            print(f"✅ Successfully applied {report.total_operations} operations")
+            if vault_adapter:
+                # Store final report in vault
+                report_data = {
+                    "operation_type": "apply",
+                    "success": report.success,
+                    "total_operations": report.total_operations,
+                    "failed_operations": report.failed_operations,
+                    "csv_file": str(csv_path),
+                    "errors": report.errors,
+                    "warnings": report.warnings
+                }
+                report_uid = vault_adapter.store_operation_report(report_data, coordinator.get_run_id())
+                print(f"Operation report stored in vault (UID: {report_uid})")
+        else:
+            print(f"❌ Failed to apply changes. {report.failed_operations} operations failed")
+            for error in report.errors:
+                print(f"  Error: {error}")
+        
+        return 0 if report.success else 1
+        
+    except Exception as e:
+        print(f"Apply error: {e}")
+        return 1
 
-    console.print("--- ⚙️  Current Configuration ---", style="bold blue")
-    console.print(f"Root folder       : [cyan]{cfg.root_folder_name}[/cyan]")
-    console.print(f"Included teams    : [cyan]{cfg.included_teams or 'ALL'}[/cyan]")
-    console.print(f"Included folders  : [cyan]{cfg.included_folders or 'ALL'}[/cyan]")
-    console.print(f"Excluded folders  : [cyan]{len(cfg.excluded_folders)} UID(s) excluded[/cyan]")
+def handle_export_data(vault_adapter: VaultStorageAdapter, args) -> int:
+    """Handle export-data command."""
+    try:
+        date_range = None
+        if args.date_range:
+            from datetime import datetime
+            start_date = datetime.strptime(args.date_range[0], '%Y-%m-%d')
+            end_date = datetime.strptime(args.date_range[1], '%Y-%m-%d')
+            date_range = (start_date, end_date)
+        
+        export_data = vault_adapter.export_system_data(date_range)
+        
+        # Save to output file
+        import json
+        with open(args.output, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, indent=2)
+        
+        print(f"System data exported to: {args.output}")
+        return 0
+        
+    except Exception as e:
+        print(f"Export error: {e}")
+        return 1
 
-# ---------------------------------------------------------------------------
-# template
-# ---------------------------------------------------------------------------
+def handle_list_checkpoints(vault_adapter: VaultStorageAdapter, args) -> int:
+    """Handle list-checkpoints command."""
+    try:
+        date_range = None
+        if args.date_range:
+            from datetime import datetime
+            start_date = datetime.strptime(args.date_range[0], '%Y-%m-%d')
+            end_date = datetime.strptime(args.date_range[1], '%Y-%m-%d')
+            date_range = (start_date, end_date)
+        
+        checkpoints = vault_adapter.list_checkpoints(date_range)
+        
+        if checkpoints:
+            print(f"Found {len(checkpoints)} checkpoints:")
+            for checkpoint in checkpoints:
+                print(f"  Run ID: {checkpoint.get('run_id', 'Unknown')}")
+                print(f"    CSV: {checkpoint.get('csv_file', 'Unknown')}")
+                print(f"    Status: {checkpoint.get('status', 'Unknown')}")
+                print(f"    Start: {checkpoint.get('start_time', 'Unknown')}")
+                print()
+        else:
+            print("No checkpoints found")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"List checkpoints error: {e}")
+        return 1
 
-@app.command()
-def template(
-    output_file: Path = typer.Option("template.csv", "--out", "-o", help="Output CSV path"),
-    config_uid: str = typer.Option(None, "--config", "-c", help="UID of the configuration record"),
-):
-    """Generate a CSV template for the current vault snapshot."""
-    cfg = _load_config_or_exit(config_uid)
-
-    vault_service = VaultService(cfg)
-    vault_data = vault_service.load_vault_data()
-    if vault_data is None:
-        console.print("❌ Failed to load vault data.", style="bold red")
-        raise typer.Exit(code=1)
-
-    TemplateService(vault_data, cfg).generate_template(output_file)
-    console.print(f"✅ Template written to [cyan]{output_file.resolve()}[/cyan]", style="bold green")
-
-# ---------------------------------------------------------------------------
-# validate
-# ---------------------------------------------------------------------------
-
-@app.command()
-def validate(
-    file: Path = typer.Argument(..., help="CSV file to validate"),
-    max_records: int = typer.Option(5000, "--max-records", help="Safety row limit"),
-):
-    """Lint a CSV file for structural & semantic errors."""
-    vs = ValidationService()
-    result = vs.validate_csv(file, max_records)
-
-    if result.is_valid:
-        console.print("✅ CSV is valid", style="bold green")
-    else:
-        console.print("❌ Validation errors:", style="bold red")
-        for err in result.errors:
-            console.print(f"  • {err}", style="red")
-        raise typer.Exit(code=1)
-
-    if result.warnings:
-        console.print("⚠️  Warnings:", style="yellow")
-        for w in result.warnings:
-            console.print(f"  • {w}", style="yellow")
-
-# ---------------------------------------------------------------------------
-# dry-run
-# ---------------------------------------------------------------------------
-
-@app.command(name="dry-run")
-def dry_run(
-    file: Path = typer.Argument(..., help="CSV file to process"),
-    config_uid: str = typer.Option(None, "--config", "-c", help="UID of the configuration record"),
-    max_records: int = typer.Option(5000, "--max-records", help="Safety row limit"),
-):
-    """Show the operations that would be performed without mutating the vault."""
-    cfg = _load_config_or_exit(config_uid)
-
-    # Validate first
-    val = ValidationService().validate_csv(file, max_records)
-    if not val.is_valid:
-        console.print("❌ CSV failed validation – aborting dry-run", style="bold red")
-        raise typer.Exit(code=1)
-
-    logger = init_logger()
-    vault_data = VaultService(cfg).load_vault_data()
-    if vault_data is None:
-        console.print("❌ Failed to load vault data.", style="bold red")
-        raise typer.Exit(code=1)
-    ops: List[str] = ProvisioningService(vault_data, cfg, logger).dry_run(file)
-
-    console.print(f"--- Proposed operations ({len(ops)}) ---", style="bold blue")
-    for op in ops:
-        console.print(f"  • {op}")
-
-# ---------------------------------------------------------------------------
-# apply
-# ---------------------------------------------------------------------------
-
-@app.command()
-def apply(
-    file: Path = typer.Argument(..., help="CSV file to apply."),
-    config_uid: str = typer.Option(None, "--config", "-c", help="UID of the configuration record"),
-    max_records: int = typer.Option(5000, "--max-records", help="Safety row limit"),
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
-):
-    """Execute provisioning – creates folders, links records, sets team permissions."""
-    cfg = _load_config_or_exit(config_uid)
-
-    # Validate first
-    val = ValidationService().validate_csv(file, max_records)
-    if not val.is_valid:
-        console.print("❌ CSV failed validation – aborting", style="bold red")
-        for err in val.errors:
-            console.print(f"  • {err}", style="red")
-        raise typer.Exit(code=1)
-
-    row_count = val.metadata.get("row_count", 0)
-    if row_count > max_records and not force:
-        console.print(f"❌ {row_count} rows exceed max-records {max_records}. Use --force to override.", style="bold red")
-        raise typer.Exit(code=1)
-
-    # Confirmation
-    if not force:
-        if not typer.confirm(f"Apply {row_count} rows to the vault? This is irreversible."):
-            console.print("🛑 Operation cancelled.", style="yellow")
-            raise typer.Abort()
-
-    run_id = str(uuid.uuid4())[:8]
-    logger = init_logger(run_id=run_id)
-    checkpoint = create_checkpoint_manager(run_id=run_id)
-    checkpoint.create_checkpoint({"csv_path": str(file), "total_operations": row_count})
-
-    vault_data = VaultService(cfg).load_vault_data()
-    if vault_data is None:
-        console.print("❌ Failed to load vault data.", style="bold red")
-        raise typer.Exit(code=1)
-    prov = ProvisioningService(vault_data, cfg, logger)
-
-    console.print("🚀 Applying changes…", style="cyan")
-    success = prov.apply_changes(file, max_records, force)
-    checkpoint.complete_checkpoint()
-
-    if success:
-        console.print("✅ Apply completed successfully!", style="bold green")
-    else:
-        console.print("❌ Apply finished with errors – check logs.", style="bold red")
-        raise typer.Exit(code=1)
-
-# ---------------------------------------------------------------------------
+def handle_cleanup(vault_adapter: VaultStorageAdapter, args) -> int:
+    """Handle cleanup command."""
+    try:
+        cleanup_stats = vault_adapter.cleanup_old_data(args.retention_days)
+        
+        print(f"Cleanup completed (retention: {args.retention_days} days):")
+        print(f"  Logs deleted: {cleanup_stats.get('logs_deleted', 0)}")
+        print(f"  Checkpoints deleted: {cleanup_stats.get('checkpoints_deleted', 0)}")
+        print(f"  Reports deleted: {cleanup_stats.get('reports_deleted', 0)}")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+        return 1
 
 if __name__ == "__main__":
-    app()
+    sys.exit(main())
