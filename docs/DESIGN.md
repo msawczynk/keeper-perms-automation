@@ -209,20 +209,20 @@ This section details the specific rules, schemas, and algorithms for the MVP.
 
 ```mermaid
 graph TD
-    R[[Root: [Perms] (private user folder)]]
-    subgraph Team A Structure
+    R["Root: [Perms] (private user folder)"]
+    subgraph "Team A Structure"
         TA[TeamA]:::sf --> TA1[Clients]:::pf
         TA1 --> TA2[Client1]:::pf
         TA2 --> TA3[Development]:::pf
         TA3 --> TA4[Servers]:::pf
     end
-    subgraph Team B Structure  
+    subgraph "Team B Structure"  
         TB[TeamB]:::sf --> TB1[Clients]:::pf
         TB1 --> TB2[Client1]:::pf
         TB2 --> TB3[Development]:::pf
         TB3 --> TB4[Servers]:::pf
     end
-    subgraph Records
+    subgraph "Records"
         REC1[Record: Dev Server]:::rec
     end
     R --> TA
