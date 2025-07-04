@@ -97,9 +97,24 @@ class AtomicValidationService:
                 # Validate with vault data if available
                 if self.vault_data:
                     vault_teams = set(team.name for team in self.vault_data.teams_by_uid.values())
-                    unknown_teams = team_columns - vault_teams
+                    
+                    # Extract team names from CSV headers (handle "TeamName (uid)" format)
+                    def extract_team_name(header: str) -> str:
+                        """Extract team name from CSV header format 'TeamName (uid)'."""
+                        if ' (' in header and header.endswith(')'):
+                            return header.split(' (')[0]
+                        return header
+                    
+                    csv_team_names = {extract_team_name(col) for col in team_columns}
+                    unknown_teams = csv_team_names - vault_teams
+                    
                     if unknown_teams:
-                        warnings.append(f"Unknown teams in CSV: {unknown_teams}")
+                        warnings.append(f"Teams not found in vault: {unknown_teams}")
+                    
+                    # Also check for teams with UIDs that might be in wrong format
+                    teams_with_uids = [col for col in team_columns if ' (' in col and col.endswith(')')]
+                    if teams_with_uids and len(teams_with_uids) != len(team_columns):
+                        warnings.append("Mix of team formats detected. Use consistent format: 'TeamName (uid)' or 'TeamName'")
             
             return ValidationReport(
                 is_valid=len(errors) == 0,
@@ -135,26 +150,38 @@ class AtomicTemplateService:
         try:
             # Get teams from vault data
             teams = list(self.vault_data.teams_by_uid.values())
+            records = list(self.vault_data.records_by_uid.values())
             
-            # Generate headers
+            # Generate headers with team names (formatted with UIDs for clarity)
             headers = ['record_uid', 'title', 'folder_path']
-            headers.extend([team.name for team in teams])
+            for team in teams:
+                # Format: "TeamName (uid)" but only show the actual name part
+                team_name = team.name
+                if team_name.startswith('Team '):
+                    # If it's still a placeholder, use the UID
+                    headers.append(f"{team_name}")
+                else:
+                    # Use actual team name with UID for clarity
+                    headers.append(f"{team_name} ({team.uid})")
             
-            # Write template
+            # Write template with all records
             with open(output_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=headers)
                 writer.writeheader()
                 
-                # Add sample rows if requested
-                sample_row = {
-                    'record_uid': 'SAMPLE_RECORD_UID',
-                    'title': 'Sample Record Title',
-                    'folder_path': f'{self.config.root_folder_name}/SampleFolder'
-                }
-                for team in teams:
-                    sample_row[team.name] = ''  # Empty for user to fill
-                
-                writer.writerow(sample_row)
+                # Add rows for all records in the vault
+                for record in records:
+                    row = {
+                        'record_uid': record.uid,
+                        'title': record.title,
+                        'folder_path': record.folder_path
+                    }
+                    # Add empty permission columns for each team (to be filled by user)
+                    for team in teams:
+                        team_header = f"{team.name} ({team.uid})" if not team.name.startswith('Team ') else team.name
+                        row[team_header] = ''  # Empty for user to fill
+                    
+                    writer.writerow(row)
             
             return True
         except Exception:
@@ -303,28 +330,56 @@ class AtomicVaultService:
             
             # Populate records and folders from folder_data
             if folder_data:
-                # Process records
-                records = folder_data.get('records', [])
-                for record_info in records:
-                    record_uid = record_info.get('record_uid', '')
-                    title = record_info.get('title', 'Untitled')
-                    folder_path = record_info.get('folder_path', '')
-                    if record_uid:
-                        record = Record.create(record_uid, title, folder_path)
-                        vault_data.records_by_uid[record_uid] = record
-                
-                # Process folders
+                # First, build folder lookup for path building
+                folder_lookup: Dict[str, Dict[str, Optional[str]]] = {}
                 folders = folder_data.get('folders', [])
                 for folder_info in folders:
                     folder_uid = folder_info.get('uid', '')
                     folder_name = folder_info.get('name', 'Untitled Folder')
                     folder_path = folder_info.get('path', '/')
+                    parent_uid = folder_info.get('parent_uid', None)
                     if folder_uid:
                         folder = Folder.create(folder_uid, folder_name, folder_path)
                         vault_data.folders_by_uid[folder_uid] = folder
+                        folder_lookup[folder_uid] = {
+                            'name': folder_name,
+                            'parent_uid': parent_uid
+                        }
+                
+                # Helper function to build folder path
+                def build_folder_path(folder_uid: Optional[str]) -> str:
+                    if not folder_uid or folder_uid not in folder_lookup:
+                        return ""
+                    
+                    path_parts: List[str] = []
+                    current_uid: Optional[str] = folder_uid
+                    
+                    while current_uid and current_uid in folder_lookup:
+                        folder_info = folder_lookup[current_uid]
+                        folder_name = folder_info.get('name', '')
+                        if folder_name:
+                            path_parts.append(folder_name)
+                        current_uid = folder_info.get('parent_uid')
+                    
+                    # Reverse to get correct order (root to leaf)
+                    path_parts.reverse()
+                    return "/" + "/".join(path_parts) if path_parts else ""
+                
+                # Process records with correct field names
+                records = folder_data.get('records', [])
+                for record_info in records:
+                    record_uid = record_info.get('uid', '')  # Use 'uid' not 'record_uid'
+                    title = record_info.get('title', 'Untitled')
+                    folder_uid = record_info.get('folder_uid', None)
+                    folder_path = build_folder_path(folder_uid)
+                    
+                    if record_uid:
+                        record = Record.create(record_uid, title, folder_path)
+                        vault_data.records_by_uid[record_uid] = record
             
             return vault_data
-        except Exception:
+        except Exception as e:
+            print(f"Error loading vault data: {e}")
             return None
 
 

@@ -5,13 +5,13 @@ Wraps the existing logger module with clean interface.
 
 from typing import Dict, Any, Optional
 from pathlib import Path
-from ..logger import StructuredLogger, init_logger, get_logger
+from ..logger import init_logger
 
 class LoggingAdapter:
     """Adapter for structured logging operations."""
     
-    def __init__(self, run_id: Optional[str] = None, log_dir: Optional[Path] = None):
-        self.logger = init_logger(run_id=run_id, log_dir=log_dir)
+    def __init__(self, run_id: Optional[str] = None, log_dir: Optional[Path] = None, vault_storage: bool = False):
+        self.logger = init_logger(run_id=run_id, log_dir=log_dir, vault_storage=vault_storage)
     
     def info(self, event: str, data: Optional[Dict[str, Any]] = None):
         """Log info level event."""
@@ -37,6 +37,12 @@ class LoggingAdapter:
         """Log apply operation summary."""
         self.logger.log_apply_summary(success, total_operations, failed_operations)
     
+    def create_operation_report(self, operation_type: str, success: bool, 
+                              total_operations: int, failed_operations: int,
+                              additional_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Create a comprehensive operation report."""
+        return self.logger.create_operation_report(operation_type, success, total_operations, failed_operations, additional_data)
+    
     @property
     def run_id(self) -> str:
         """Get the run ID."""
@@ -47,6 +53,6 @@ class LoggingAdapter:
         """Get the log file path."""
         return self.logger.log_file
 
-def create_logging_adapter(run_id: Optional[str] = None, log_dir: Optional[Path] = None) -> LoggingAdapter:
+def create_logging_adapter(run_id: Optional[str] = None, log_dir: Optional[Path] = None, vault_storage: bool = False) -> LoggingAdapter:
     """Factory function to create logging adapter."""
-    return LoggingAdapter(run_id=run_id, log_dir=log_dir) 
+    return LoggingAdapter(run_id=run_id, log_dir=log_dir, vault_storage=vault_storage) 

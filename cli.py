@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Optional
 
 from keeper_auto.application.services import ApplicationCoordinator
-from keeper_auto.infrastructure.logging_adapter import LoggingAdapter
 from keeper_auto.infrastructure.vault_storage_adapter import VaultStorageAdapter
 
 def create_parser() -> argparse.ArgumentParser:
@@ -98,6 +97,12 @@ Examples:
         'csv_file',
         type=str,
         help='CSV file to validate'
+    )
+    validate_parser.add_argument(
+        '--max-records',
+        type=int,
+        default=5000,
+        help='Maximum number of records to validate (default: 5000)'
     )
     
     # Dry-run command
@@ -205,16 +210,12 @@ def main():
         return 1
     
     try:
-        # Initialize logging with vault storage option
-        logger = LoggingAdapter(
-            run_id=args.run_id,
-            vault_storage=args.vault_storage
-        )
+        # Initialize logging
+        # Logger is initialized within ApplicationCoordinator
         
         # Initialize application coordinator with vault storage
         coordinator = ApplicationCoordinator(
-            logger=logger,
-            vault_storage=args.vault_storage
+            run_id=args.run_id
         )
         
         # Initialize vault adapter if needed
@@ -238,13 +239,13 @@ def main():
         elif args.command == 'apply':
             return handle_apply(coordinator, args, vault_adapter)
         
-        elif args.command == 'export-data' and args.vault_storage:
+        elif args.command == 'export-data' and args.vault_storage and vault_adapter:
             return handle_export_data(vault_adapter, args)
         
-        elif args.command == 'list-checkpoints' and args.vault_storage:
+        elif args.command == 'list-checkpoints' and args.vault_storage and vault_adapter:
             return handle_list_checkpoints(vault_adapter, args)
         
-        elif args.command == 'cleanup' and args.vault_storage:
+        elif args.command == 'cleanup' and args.vault_storage and vault_adapter:
             return handle_cleanup(vault_adapter, args)
         
         else:
@@ -261,10 +262,19 @@ def main():
             traceback.print_exc()
         return 1
 
-def handle_configure(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+def handle_configure(coordinator: ApplicationCoordinator, args: argparse.Namespace, vault_adapter: Optional[VaultStorageAdapter]) -> int:
     """Handle configure command with vault storage support."""
     try:
-        config = coordinator.load_configuration(args.config_name if vault_adapter else None)
+        # Initialize coordinator first
+        if not coordinator.initialize():
+            print("Failed to initialize coordinator")
+            return 1
+        
+        # Load configuration from vault if available, otherwise use default
+        if vault_adapter:
+            config = vault_adapter.load_configuration(args.config_name)
+        else:
+            config = coordinator.config  # Use the config loaded during initialization
         
         if config:
             print("Current configuration:")
@@ -292,23 +302,30 @@ def handle_configure(coordinator: ApplicationCoordinator, args, vault_adapter: O
         print(f"Configuration error: {e}")
         return 1
 
-def handle_template(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+def handle_template(coordinator: ApplicationCoordinator, args: argparse.Namespace, vault_adapter: Optional[VaultStorageAdapter]) -> int:
     """Handle template command with vault storage support."""
     try:
+        # Initialize coordinator first
+        if not coordinator.initialize():
+            print("Failed to initialize coordinator")
+            return 1
+        
         output_path = Path(args.output_file)
-        template_content = coordinator.generate_template()
+        success = coordinator.generate_template(output_path)
         
-        # Save to local file
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(template_content)
-        
-        print(f"Template generated: {output_path}")
-        
-        # Also store in vault if enabled
-        if vault_adapter:
-            template_name = args.template_name or f"template-{coordinator.get_run_id()}"
-            vault_record_uid = vault_adapter.store_csv_template(template_content, template_name)
-            print(f"Template also stored in vault as '{template_name}' (UID: {vault_record_uid})")
+        if success:
+            print(f"Template generated: {output_path}")
+            
+            # Also store in vault if enabled
+            if vault_adapter:
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    template_content = f.read()
+                template_name = args.template_name or f"template-{coordinator.get_run_id()}"
+                vault_record_uid = vault_adapter.store_csv_template(template_content, template_name)
+                print(f"Template also stored in vault as '{template_name}' (UID: {vault_record_uid})")
+        else:
+            print("Failed to generate template")
+            return 1
         
         return 0
         
@@ -316,15 +333,20 @@ def handle_template(coordinator: ApplicationCoordinator, args, vault_adapter: Op
         print(f"Template generation error: {e}")
         return 1
 
-def handle_validate(coordinator: ApplicationCoordinator, args) -> int:
+def handle_validate(coordinator: ApplicationCoordinator, args: argparse.Namespace) -> int:
     """Handle validate command."""
     try:
+        # Initialize coordinator first
+        if not coordinator.initialize():
+            print("Failed to initialize coordinator")
+            return 1
+        
         csv_path = Path(args.csv_file)
         if not csv_path.exists():
             print(f"CSV file not found: {csv_path}")
             return 1
         
-        result = coordinator.validate_csv(csv_path)
+        result = coordinator.validate_csv(csv_path, args.max_records)
         
         if result.is_valid:
             print(f"✅ CSV file is valid ({result.row_count} rows)")
@@ -344,37 +366,49 @@ def handle_validate(coordinator: ApplicationCoordinator, args) -> int:
         print(f"Validation error: {e}")
         return 1
 
-def handle_dry_run(coordinator: ApplicationCoordinator, args) -> int:
+def handle_dry_run(coordinator: ApplicationCoordinator, args: argparse.Namespace) -> int:
     """Handle dry-run command."""
     try:
+        # Initialize coordinator first
+        if not coordinator.initialize():
+            print("Failed to initialize coordinator")
+            return 1
+        
         csv_path = Path(args.csv_file)
         if not csv_path.exists():
             print(f"CSV file not found: {csv_path}")
             return 1
         
-        report = coordinator.dry_run(csv_path, args.max_records)
+        report = coordinator.dry_run(csv_path)
         
-        print(f"Dry run completed for {report.total_operations} operations:")
-        print(f"  Would create {len([op for op in report.operations if 'create' in op.lower()])} folders")
-        print(f"  Would share {len([op for op in report.operations if 'share' in op.lower()])} records")
-        print(f"  Would set {len([op for op in report.operations if 'permission' in op.lower()])} permissions")
+        if report.success:
+            print(f"✅ Dry run completed successfully")
+            print(f"  Total operations planned: {report.total_operations}")
+            
+            if report.warnings:
+                print(f"⚠️  {len(report.warnings)} warning(s):")
+                for warning in report.warnings:
+                    print(f"  Warning: {warning}")
+        else:
+            print(f"❌ Dry run failed")
+            print(f"  Failed operations: {report.failed_operations}")
+            for error in report.errors:
+                print(f"  Error: {error}")
         
-        if report.operations:
-            print("\nOperations that would be performed:")
-            for i, operation in enumerate(report.operations[:10], 1):  # Show first 10
-                print(f"  {i}. {operation}")
-            if len(report.operations) > 10:
-                print(f"  ... and {len(report.operations) - 10} more operations")
-        
-        return 0
+        return 0 if report.success else 1
         
     except Exception as e:
         print(f"Dry run error: {e}")
         return 1
 
-def handle_apply(coordinator: ApplicationCoordinator, args, vault_adapter: Optional[VaultStorageAdapter]) -> int:
+def handle_apply(coordinator: ApplicationCoordinator, args: argparse.Namespace, vault_adapter: Optional[VaultStorageAdapter]) -> int:
     """Handle apply command with vault storage and resume support."""
     try:
+        # Initialize coordinator first
+        if not coordinator.initialize():
+            print("Failed to initialize coordinator")
+            return 1
+        
         csv_path = Path(args.csv_file)
         if not csv_path.exists():
             print(f"CSV file not found: {csv_path}")
@@ -417,7 +451,7 @@ def handle_apply(coordinator: ApplicationCoordinator, args, vault_adapter: Optio
         print(f"Apply error: {e}")
         return 1
 
-def handle_export_data(vault_adapter: VaultStorageAdapter, args) -> int:
+def handle_export_data(vault_adapter: VaultStorageAdapter, args: argparse.Namespace) -> int:
     """Handle export-data command."""
     try:
         date_range = None
@@ -441,7 +475,7 @@ def handle_export_data(vault_adapter: VaultStorageAdapter, args) -> int:
         print(f"Export error: {e}")
         return 1
 
-def handle_list_checkpoints(vault_adapter: VaultStorageAdapter, args) -> int:
+def handle_list_checkpoints(vault_adapter: VaultStorageAdapter, args: argparse.Namespace) -> int:
     """Handle list-checkpoints command."""
     try:
         date_range = None
@@ -456,11 +490,7 @@ def handle_list_checkpoints(vault_adapter: VaultStorageAdapter, args) -> int:
         if checkpoints:
             print(f"Found {len(checkpoints)} checkpoints:")
             for checkpoint in checkpoints:
-                print(f"  Run ID: {checkpoint.get('run_id', 'Unknown')}")
-                print(f"    CSV: {checkpoint.get('csv_file', 'Unknown')}")
-                print(f"    Status: {checkpoint.get('status', 'Unknown')}")
-                print(f"    Start: {checkpoint.get('start_time', 'Unknown')}")
-                print()
+                print(f"  - {checkpoint['run_id']}: {checkpoint['operation_type']} ({checkpoint['timestamp']})")
         else:
             print("No checkpoints found")
         
@@ -470,15 +500,17 @@ def handle_list_checkpoints(vault_adapter: VaultStorageAdapter, args) -> int:
         print(f"List checkpoints error: {e}")
         return 1
 
-def handle_cleanup(vault_adapter: VaultStorageAdapter, args) -> int:
+def handle_cleanup(vault_adapter: VaultStorageAdapter, args: argparse.Namespace) -> int:
     """Handle cleanup command."""
     try:
-        cleanup_stats = vault_adapter.cleanup_old_data(args.retention_days)
+        from datetime import datetime, timedelta
         
-        print(f"Cleanup completed (retention: {args.retention_days} days):")
-        print(f"  Logs deleted: {cleanup_stats.get('logs_deleted', 0)}")
-        print(f"  Checkpoints deleted: {cleanup_stats.get('checkpoints_deleted', 0)}")
-        print(f"  Reports deleted: {cleanup_stats.get('reports_deleted', 0)}")
+        cutoff_date = datetime.now() - timedelta(days=args.retention_days)
+        cleanup_result = vault_adapter.cleanup_old_data(cutoff_date)
+        
+        print(f"Cleanup completed:")
+        print(f"  Removed {cleanup_result.get('deleted_records', 0)} old records")
+        print(f"  Freed {cleanup_result.get('freed_space', 0)} bytes")
         
         return 0
         
