@@ -13,7 +13,7 @@ from .models import (
 )
 from .keeper_client import (
     get_teams, get_folder_data, get_record,
-    ensure_folder_path, share_record_to_folder, add_team_to_shared_folder,
+    ensure_team_folder_path, share_record_to_folder, add_team_to_shared_folder,
     get_team_uid_by_name
 )
 from .logger import StructuredLogger
@@ -25,10 +25,16 @@ _ALLOWED_PERMISSION_TOKENS: Set[str] = {"ro", "rw", "rws", "mgr", "admin"}
 class ConfigService:
     """Service for configuration management."""
 
-    def load_config(self) -> Optional[ConfigRecord]:
+    def load_config(self, record_uid: Optional[str] = None) -> Optional[ConfigRecord]:
         """Fetches the configuration record from the vault and parses it into the ConfigRecord model."""
         try:
-            config_record_uid = self._find_config_record_by_title()
+            if record_uid:
+                # Use provided record UID
+                config_record_uid = record_uid
+            else:
+                # Find by title
+                config_record_uid = self._find_config_record_by_title()
+            
             if not config_record_uid:
                 # Return default config if not found
                 return ConfigRecord()
@@ -83,6 +89,8 @@ class VaultService:
             return self.vault_data
 
         try:
+            from keepercommander.subfolder import find_folders  # type: ignore
+            
             self.vault_data.clear()
             folder_data = get_folder_data()
             
@@ -96,24 +104,44 @@ class VaultService:
                         continue
                     self.vault_data.add_team(team_uid, team_name)
             
-            # Load folders and records
+            # Load folders first so we can build paths
             for folder_info in folder_data.get('folders', []):
                 folder_uid = folder_info.get('uid')
                 folder_name = folder_info.get('name')
                 if folder_uid and folder_name:
                     self.vault_data.add_folder(folder_uid, folder_name, folder_info.get('parent_uid'))
 
+            # Load records with proper folder paths
             for record_info in folder_data.get('records', []):
                 record_uid = record_info.get('uid')
                 record_title = record_info.get('title')
                 if record_uid and record_title:
-                    folder_path = self._build_folder_path(record_info.get('folder_uid'))
+                    # Build folder path using find_folders
+                    folder_path = self._build_folder_path_from_record(record_uid)
                     self.vault_data.add_record(record_uid, record_title, folder_path)
             
             self.vault_data.mark_loaded()
             return self.vault_data
         except Exception:
             return None
+
+    def _build_folder_path_from_record(self, record_uid: str) -> str:
+        """Build the full folder path for a record using find_folders."""
+        try:
+            from keeper_auto.keeper_client import get_client  # type: ignore
+            from keepercommander.subfolder import find_folders  # type: ignore
+            
+            sdk = get_client()
+            folder_uids = list(find_folders(sdk, record_uid))
+            
+            if not folder_uids:
+                return ""
+            
+            # Use the first folder (records can be in multiple folders)
+            folder_uid = folder_uids[0]
+            return self._build_folder_path(folder_uid)
+        except Exception:
+            return ""
 
     def _build_folder_path(self, folder_uid: Optional[str]) -> str:
         """Build the full folder path for a given folder UID."""
@@ -146,7 +174,19 @@ class TemplateService:
         teams = list(self.vault_data.teams_by_uid.values())
         records = list(self.vault_data.records_by_uid.values())
         
-        headers = ['record_uid', 'title', 'folder_path'] + [team.name for team in teams]
+        # Create headers with format "TeamName (uid)" instead of just team name
+        team_headers = []
+        for team in teams:
+            # Format: "TeamName (uid)" but only show the actual name part
+            team_name = team.name
+            if team_name.startswith('Team '):
+                # If it's still a placeholder, use the UID
+                team_headers.append(f"{team_name}")
+            else:
+                # Use actual team name with UID for clarity
+                team_headers.append(f"{team_name} ({team.uid})")
+        
+        headers = ['record_uid', 'title', 'folder_path'] + team_headers
         
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
@@ -200,20 +240,30 @@ class ProvisioningService:
         """Return a human-readable list of operations that *would* be executed."""
         operations: List[str] = []
         for row in self._iter_csv_rows(csv_path):
-            folder_path = f"{self.config.root_folder_name}/{row['folder_path'].lstrip('/')}"
-            operations.append(f"Ensure folder path {folder_path}")
             record_uid = row['record_uid']
-            operations.append(f"Link record {record_uid} → {folder_path}")
+            folder_path = row['folder_path'].lstrip('/')
+            
+            # Process each team that has permissions on this record
             for col, token in row.items():
                 if col in ('record_uid', 'title', 'folder_path'):
                     continue
                 token = token.lower().strip()
-                if token:
-                    operations.append(f"Add team '{col}' as '{token}' on {folder_path}")
+                if not token:
+                    continue
+                
+                # Extract team name from column header
+                team_name = col
+                if ' (' in team_name and team_name.endswith(')'):
+                    team_name = team_name.split(' (')[0]
+                
+                team_folder_path = f"{self.config.root_folder_name}/{team_name}/{folder_path}"
+                operations.append(f"Ensure team folder path {team_folder_path}")
+                operations.append(f"Link record {record_uid} → {team_folder_path}")
+                operations.append(f"Add team '{team_name}' with '{token}' permissions to their shared folder")
         return operations
 
     def apply_changes(self, csv_path: Path, max_records: int, force: bool) -> bool:
-        """Apply changes according to CSV. Returns True on full success."""
+        """Apply changes according to CSV using per-team folder structure. Returns True on full success."""
 
         rows = self._iter_csv_rows(csv_path)
         if not force and len(rows) > max_records:
@@ -224,24 +274,9 @@ class ProvisioningService:
 
         for row in rows:
             record_uid = row['record_uid']
-            target_folder_path = f"{self.config.root_folder_name}/{row['folder_path'].lstrip('/')}"
-
-            # 1. Ensure folder structure
-            folder_uid = ensure_folder_path(target_folder_path)
-            if not folder_uid:
-                self.logger.error("folder_creation_failed", {"path": target_folder_path})
-                success = False
-                continue
-
-            # 2. Link record (idempotent: Keeper will ignore duplicate link)
-            try:
-                share_record_to_folder(record_uid, folder_uid)
-            except Exception as e:
-                self.logger.error("share_record_failed", {"record_uid": record_uid, "folder_uid": folder_uid, "error": str(e)})
-                success = False
-                continue
-
-            # 3. Team permissions
+            folder_path = row['folder_path'].lstrip('/')  # Remove leading slash
+            
+            # Process each team that has permissions on this record
             for col, token in row.items():
                 if col in ('record_uid', 'title', 'folder_path'):
                     continue
@@ -249,7 +284,36 @@ class ProvisioningService:
                 if not token:
                     continue  # blank → no access
 
-                team_uid = get_team_uid_by_name(col)
+                # Extract team name from column header (remove UID part if present)
+                team_name = col
+                if ' (' in team_name and team_name.endswith(')'):
+                    team_name = team_name.split(' (')[0]  # Remove UID part
+
+                # 1. Create team-specific folder structure: [Perms]/TeamName/folder_path
+                team_folder_uid = ensure_team_folder_path(team_name, folder_path, self.config.root_folder_name)
+                if not team_folder_uid:
+                    self.logger.error("team_folder_creation_failed", {"team": team_name, "path": folder_path})
+                    success = False
+                    continue
+
+                # 2. Share record to the team's folder
+                try:
+                    share_record_to_folder(record_uid, team_folder_uid)
+                    self.logger.info("record_shared", {"record_uid": record_uid, "team": team_name, "folder_uid": team_folder_uid})
+                except Exception as e:
+                    self.logger.error("share_record_failed", {"record_uid": record_uid, "team": team_name, "folder_uid": team_folder_uid, "error": str(e)})
+                    success = False
+                    continue
+
+                # 3. Add team to their shared folder (the team folder itself, not the subfolder)
+                # We need to find the team's shared folder UID (parent of the final folder)
+                team_shared_folder_uid = self._find_team_shared_folder(team_name)
+                if not team_shared_folder_uid:
+                    self.logger.error("team_shared_folder_not_found", {"team": team_name})
+                    success = False
+                    continue
+
+                team_uid = get_team_uid_by_name(col)  # Use original column name for team lookup
                 if not team_uid:
                     self.logger.warning("unknown_team", {"team_name": col})
                     continue
@@ -261,12 +325,34 @@ class ProvisioningService:
                     continue
 
                 try:
-                    add_team_to_shared_folder(team_uid, folder_uid, flags)
+                    add_team_to_shared_folder(team_uid, team_shared_folder_uid, flags)
+                    self.logger.info("team_permissions_added", {"team_uid": team_uid, "team": team_name, "folder_uid": team_shared_folder_uid, "permissions": token})
                 except Exception as e:
-                    self.logger.error("add_team_failed", {"team_uid": team_uid, "folder_uid": folder_uid, "error": str(e)})
+                    self.logger.error("add_team_failed", {"team_uid": team_uid, "team": team_name, "folder_uid": team_shared_folder_uid, "error": str(e)})
                     success = False
 
         return success
+
+    def _find_team_shared_folder(self, team_name: str) -> Optional[str]:
+        """Find the shared folder UID for a team under the root [Perms] folder."""
+        try:
+            from .keeper_client import find_folder_by_name
+            
+            # Find root folder
+            root_folder = find_folder_by_name(self.config.root_folder_name, parent_uid=None)
+            if not root_folder:
+                return None
+            
+            root_folder_uid = root_folder.get('uid')
+            
+            # Find team folder under root
+            team_folder = find_folder_by_name(team_name, parent_uid=root_folder_uid)
+            if not team_folder:
+                return None
+            
+            return team_folder.get('uid')
+        except Exception:
+            return None
 
 
 class ValidationService:

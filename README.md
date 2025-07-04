@@ -3,9 +3,9 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Enterprise-grade bulk permissions management for Keeper vaults using CSV workflows.**
+**Enterprise-grade bulk permissions management for Keeper vaults using CSV workflows with per-team folder isolation.**
 
-This system automates the provisioning of Keeper record permissions to teams through a clean CSV-based interface. It creates mirrored shared folder structures and applies granular permissions without duplicating data.
+This system automates the provisioning of Keeper record permissions to teams through a clean CSV-based interface. It creates **per-team mirrored folder structures** ensuring perfect team isolation and granular permissions without duplicating data.
 
 ## 🚀 Quick Start
 
@@ -13,20 +13,26 @@ This system automates the provisioning of Keeper record permissions to teams thr
 # Install dependencies
 pip install -r requirements.txt
 
-# Start interactive mode (recommended)
-python cli.py interactive
+# Configure and authenticate
+python cli.py configure
 
-# Or run single commands
-python cli.py status
-python cli.py template my_permissions.csv
-python cli.py validate my_permissions.csv
-python cli.py apply my_permissions.csv --force
+# Generate CSV template with team-specific columns
+python cli.py template --out permissions.csv
+
+# Validate your CSV
+python cli.py validate permissions.csv
+
+# Preview changes (dry run)
+python cli.py dry-run permissions.csv
+
+# Apply permissions
+python cli.py apply permissions.csv --force
 ```
 
 ## 📋 Table of Contents
 
 - [Features](#-features)
-- [Architecture](#-architecture)
+- [Per-Team Architecture](#-per-team-architecture)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Usage Guide](#-usage-guide)
@@ -41,10 +47,17 @@ python cli.py apply my_permissions.csv --force
 ### **Core Capabilities**
 - 🔄 **Bulk Permission Management** - Update hundreds of records with single CSV
 - 📊 **CSV-Based Workflow** - Familiar spreadsheet interface for permissions
-- 🏗️ **Automatic Folder Mirroring** - Creates shared folder structures automatically
+- 🏗️ **Per-Team Folder Isolation** - Each team gets their own mirrored folder structure
 - 🔒 **Granular Permissions** - 5-level permission system (ro, rw, rws, mgr, admin)
 - 🎯 **Idempotent Operations** - Safe to run multiple times with same results
 - 📈 **Enterprise Scale** - Handles thousands of records and teams
+
+### **Per-Team Architecture Benefits**
+- 🔐 **Perfect Team Isolation** - Teams can only access their own folder structure
+- 📁 **Complete Folder Mirroring** - Each team gets the full organizational hierarchy
+- ✅ **Keeper-Compliant** - Follows Keeper's permission model correctly
+- 🚀 **Scalable** - Works with any number of teams
+- 🎯 **Granular Control** - Different teams can have different permissions on same record
 
 ### **Enterprise Features**
 - 🔐 **SSO Integration** - Works with enterprise Single Sign-On
@@ -61,37 +74,36 @@ python cli.py apply my_permissions.csv --force
 - 🔌 **Pluggable Adapters** - Mock implementations for testing
 - 📖 **Comprehensive Documentation** - Detailed API and usage docs
 
-## 🏗️ Architecture
+## 🏗️ Per-Team Architecture
 
-The system follows a clean **Atomic Architecture** with clear separation of concerns:
+The system implements a **per-team folder structure** that creates isolated, mirrored folder hierarchies for each team:
 
+### **Folder Structure**
 ```
-┌─────────────────────┐
-│   CLI Interface     │  ← User interaction layer
-├─────────────────────┤
-│ Application Layer   │  ← Business coordination
-│ • Coordinator       │
-│ • Atomic Services   │
-├─────────────────────┤
-│   Domain Layer      │  ← Business logic and models
-│ • Models            │
-│ • Validators        │
-│ • Operations        │
-├─────────────────────┤
-│ Infrastructure      │  ← External system integration
-│ • Keeper Adapter    │
-│ • File Adapter      │
-│ • Logging Adapter   │
-└─────────────────────┘
+[Perms] (private root folder)
+├── TeamA (shared folder) ← Team A has access
+│   └── Clients/Client1/Development/Servers (private subfolders)
+│       └── Records shared with Team A permissions
+├── TeamB (shared folder) ← Team B has access  
+│   └── Clients/Client1/Development/Servers (private subfolders)
+│       └── Records shared with Team B permissions
+└── TeamC (shared folder) ← Team C has access
+    └── Clients/Client2/Production/Database (private subfolders)
+        └── Records shared with Team C permissions
 ```
 
-### **Atomic Services**
-- **AtomicValidationService** - CSV validation and error detection
-- **AtomicTemplateService** - Template generation with real team data
-- **AtomicProvisioningService** - Idempotent permission provisioning
-- **AtomicConfigService** - Configuration management
-- **AtomicVaultService** - Vault data operations
-- **ApplicationCoordinator** - Service orchestration and coordination
+### **Key Benefits**
+1. **Perfect Team Isolation**: Each team can only access their own folder structure
+2. **Scalable**: Works with any number of teams
+3. **Keeper-Compliant**: Follows Keeper's permission model correctly
+4. **Complete Mirroring**: Each team gets the full organizational folder hierarchy
+5. **Granular Permissions**: Different teams can have different permission levels on the same record
+
+### **How It Works**
+1. **CSV Processing**: Each row specifies which teams get access to which records
+2. **Folder Creation**: Creates team-specific shared folders under `[Perms]`
+3. **Record Sharing**: Shares records to appropriate team folders with specified permissions
+4. **Team Permissions**: Applies team permissions to their shared folders
 
 ## 📦 Installation
 
